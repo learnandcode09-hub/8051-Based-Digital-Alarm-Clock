@@ -1,0 +1,545 @@
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     1
+
+
+MACRO ASSEMBLER A51 V8.2.7.0
+OBJECT MODULE PLACED IN .\Objects\Digital_Clock.obj
+ASSEMBLER INVOKED BY: C:\Keil_v5\C51\BIN\A51.EXE Digital_Clock.a51 SET(SMALL) DEBUG PRINT(.\Listings\Digital_Clock.lst) 
+                      OBJECT(.\Objects\Digital_Clock.obj) EP
+
+LOC  OBJ            LINE     SOURCE
+
+                       1     ; ============================================================
+                       2     ; AT89S52 Alarm Clock with TM1637 4-digit display
+                       3     ; Crystal: 11.0592 MHz
+                       4     ;
+                       5     ; P1.0 = TM1637 CLK
+                       6     ; P1.1 = TM1637 DIO
+                       7     ; P3.2 = SET button, active LOW
+                       8     ; P3.3 = UP button, active LOW
+                       9     ; P3.4 = ALARM enable / silence button, active LOW
+                      10     ; P3.5 = Active buzzer output, active HIGH
+                      11     ; ============================================================
+                      12     
+  0090                13     CLK             BIT     P1.0
+  0091                14     DIO             BIT     P1.1
+                      15     
+  00B2                16     SET_KEY         BIT     P3.2
+  00B3                17     UP_KEY          BIT     P3.3
+  00B4                18     ALARM_KEY       BIT     P3.4
+  00B5                19     BUZZER          BIT     P3.5
+                      20     
+  0030                21     SEC             EQU     30H
+  0031                22     MINUTE          EQU     31H
+  0032                23     HOUR            EQU     32H
+  0033                24     TICK50          EQU     33H
+                      25     
+  0034                26     AL_HOUR         EQU     34H
+  0035                27     AL_MINUTE       EQU     35H
+  0036                28     ALARM_EN        EQU     36H
+  0037                29     SET_MODE        EQU     37H    ; 0=clock, 1=set alarm hour, 2=set alarm minute
+  0038                30     RINGING         EQU     38H
+  0039                31     ALARM_LATCH     EQU     39H
+  003A                32     BEEP_TICK       EQU     3AH
+                      33     
+  003B                34     DISP_HOUR       EQU     3BH
+  003C                35     DISP_MINUTE     EQU     3CH
+  003D                36     DISP_SEC        EQU     3DH
+                      37     
+0000                  38                     ORG     0000H
+0000 020030           39                     LJMP    MAIN
+                      40     
+000B                  41                     ORG     000BH
+000B 02007A           42                     LJMP    TIMER0_ISR
+                      43     
+0030                  44                     ORG     0030H
+                      45     
+0030                  46     MAIN:
+0030 75815F           47                     MOV     SP,#5FH
+                      48     
+                      49     ; Clock initial time: 12:00:00
+0033 75320C           50                     MOV     HOUR,#12D
+0036 753100           51                     MOV     MINUTE,#00D
+0039 753000           52                     MOV     SEC,#00D
+003C 753300           53                     MOV     TICK50,#00D
+                      54     
+                      55     ; Default alarm: 06:30, initially disabled
+003F 753406           56                     MOV     AL_HOUR,#06D
+0042 75351E           57                     MOV     AL_MINUTE,#30D
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     2
+
+0045 753600           58                     MOV     ALARM_EN,#00H
+0048 753700           59                     MOV     SET_MODE,#00H
+004B 753800           60                     MOV     RINGING,#00H
+004E 753900           61                     MOV     ALARM_LATCH,#00H
+0051 753A00           62                     MOV     BEEP_TICK,#00H
+                      63     
+                      64     ; Set input pins high: buttons connect pin to GND when pressed
+0054 D2B2             65                     SETB    SET_KEY
+0056 D2B3             66                     SETB    UP_KEY
+0058 D2B4             67                     SETB    ALARM_KEY
+005A C2B5             68                     CLR     BUZZER
+                      69     
+005C D290             70                     SETB    CLK
+005E D291             71                     SETB    DIO
+                      72     
+                      73     ; Timer 0, mode 1
+                      74     ; Reload 4C00H = nominal 50 ms at 11.0592 MHz
+0060 758901           75                     MOV     TMOD,#01H
+0063 758C4C           76                     MOV     TH0,#4CH
+0066 758A00           77                     MOV     TL0,#00H
+0069 C28D             78                     CLR     TF0
+006B D28C             79                     SETB    TR0
+006D 75A882           80                     MOV     IE,#82H         ; Enable Timer0 interrupt
+                      81     
+0070 31B8             82                     ACALL   TM_INIT
+                      83     
+0072                  84     MAIN_LOOP:
+0072 11F3             85                     ACALL   CHECK_KEYS
+0074 11C8             86                     ACALL   CHECK_ALARM
+0076 314E             87                     ACALL   SHOW_DISPLAY
+0078 80F8             88                     SJMP    MAIN_LOOP
+                      89     
+                      90     
+                      91     ; ============================================================
+                      92     ; Timer0 interrupt: approximately every 50 ms
+                      93     ; ============================================================
+007A                  94     TIMER0_ISR:
+007A C0E0             95                     PUSH    ACC
+007C C0D0             96                     PUSH    PSW
+                      97     
+007E 758C4C           98                     MOV     TH0,#4CH
+0081 758A00           99                     MOV     TL0,#00H
+                     100     
+                     101     ; Make alarm sound: 0.5 second ON, 0.5 second OFF
+0084 E538            102                     MOV     A,RINGING
+0086 7007            103                     JNZ     ALARM_SOUND
+                     104     
+0088 C2B5            105                     CLR     BUZZER
+008A 753A00          106                     MOV     BEEP_TICK,#00H
+008D 800C            107                     SJMP    CLOCK_TICK
+                     108     
+008F                 109     ALARM_SOUND:
+008F 053A            110                     INC     BEEP_TICK
+0091 E53A            111                     MOV     A,BEEP_TICK
+0093 B40A05          112                     CJNE    A,#10D,CLOCK_TICK
+                     113     
+0096 753A00          114                     MOV     BEEP_TICK,#00H
+0099 B2B5            115                     CPL     BUZZER
+                     116     
+009B                 117     CLOCK_TICK:
+009B 0533            118                     INC     TICK50
+009D E533            119                     MOV     A,TICK50
+009F B41421          120                     CJNE    A,#20D,TIMER_EXIT
+                     121     
+                     122     ; 20 × 50 ms = 1 second
+00A2 753300          123                     MOV     TICK50,#00H
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     3
+
+00A5 0530            124                     INC     SEC
+00A7 E530            125                     MOV     A,SEC
+00A9 B43C17          126                     CJNE    A,#60D,TIMER_EXIT
+                     127     
+00AC 753000          128                     MOV     SEC,#00D
+00AF 0531            129                     INC     MINUTE
+00B1 E531            130                     MOV     A,MINUTE
+00B3 B43C0D          131                     CJNE    A,#60D,TIMER_EXIT
+                     132     
+00B6 753100          133                     MOV     MINUTE,#00D
+00B9 0532            134                     INC     HOUR
+00BB E532            135                     MOV     A,HOUR
+00BD B41803          136                     CJNE    A,#24D,TIMER_EXIT
+                     137     
+00C0 753200          138                     MOV     HOUR,#00D
+                     139     
+00C3                 140     TIMER_EXIT:
+00C3 D0D0            141                     POP     PSW
+00C5 D0E0            142                     POP     ACC
+00C7 32              143                     RETI
+                     144     
+                     145     
+                     146     ; ============================================================
+                     147     ; Alarm comparison and trigger
+                     148     ; ============================================================
+00C8                 149     CHECK_ALARM:
+00C8 E536            150                     MOV     A,ALARM_EN
+00CA 7009            151                     JNZ     ALARM_ENABLED
+                     152     
+00CC 753800          153                     MOV     RINGING,#00H
+00CF 753900          154                     MOV     ALARM_LATCH,#00H
+00D2 C2B5            155                     CLR     BUZZER
+00D4 22              156                     RET
+                     157     
+00D5                 158     ALARM_ENABLED:
+00D5 E532            159                     MOV     A,HOUR
+00D7 B53415          160                     CJNE    A,AL_HOUR,NOT_ALARM_TIME
+                     161     
+00DA E531            162                     MOV     A,MINUTE
+00DC B53510          163                     CJNE    A,AL_MINUTE,NOT_ALARM_TIME
+                     164     
+                     165     ; Prevent repeated triggering during the same alarm minute
+00DF E539            166                     MOV     A,ALARM_LATCH
+00E1 700F            167                     JNZ     ALARM_DONE
+                     168     
+00E3 753901          169                     MOV     ALARM_LATCH,#01H
+00E6 753801          170                     MOV     RINGING,#01H
+00E9 753A00          171                     MOV     BEEP_TICK,#00H
+00EC D2B5            172                     SETB    BUZZER
+00EE 22              173                     RET
+                     174     
+00EF                 175     NOT_ALARM_TIME:
+00EF 753900          176                     MOV     ALARM_LATCH,#00H
+                     177     
+00F2                 178     ALARM_DONE:
+00F2 22              179                     RET
+                     180     
+                     181     
+                     182     ; ============================================================
+                     183     ; Button handling
+                     184     ; SET: choose alarm-hour -> alarm-minute -> clock display
+                     185     ; UP: increase selected alarm value
+                     186     ; ALARM: enable/disable alarm, or silence ringing alarm
+                     187     ; ============================================================
+00F3                 188     CHECK_KEYS:
+00F3 30B407          189                     JNB     ALARM_KEY,ALARM_PRESSED
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     4
+
+00F6 30B21E          190                     JNB     SET_KEY,SET_PRESSED
+00F9 30B32D          191                     JNB     UP_KEY,UP_PRESSED
+00FC 22              192                     RET
+                     193     
+00FD                 194     ALARM_PRESSED:
+00FD 31E9            195                     ACALL   DEBOUNCE
+00FF 20B44B          196                     JB      ALARM_KEY,KEY_DONE
+                     197     
+0102 E538            198                     MOV     A,RINGING
+0104 6008            199                     JZ      TOGGLE_ALARM
+                     200     
+                     201     ; If alarm is ringing, this button silences it.
+0106 753800          202                     MOV     RINGING,#00H
+0109 C2B5            203                     CLR     BUZZER
+010B 31FA            204                     ACALL   WAIT_ALARM_RELEASE
+010D 22              205                     RET
+                     206     
+010E                 207     TOGGLE_ALARM:
+010E E536            208                     MOV     A,ALARM_EN
+0110 6401            209                     XRL     A,#01H
+0112 F536            210                     MOV     ALARM_EN,A
+0114 31FA            211                     ACALL   WAIT_ALARM_RELEASE
+0116 22              212                     RET
+                     213     
+0117                 214     SET_PRESSED:
+0117 31E9            215                     ACALL   DEBOUNCE
+0119 20B231          216                     JB      SET_KEY,KEY_DONE
+                     217     
+011C 0537            218                     INC     SET_MODE
+011E E537            219                     MOV     A,SET_MODE
+0120 B40303          220                     CJNE    A,#03D,SET_RELEASE
+                     221     
+0123 753700          222                     MOV     SET_MODE,#00H
+                     223     
+0126                 224     SET_RELEASE:
+0126 31F2            225                     ACALL   WAIT_SET_RELEASE
+0128 22              226                     RET
+                     227     
+0129                 228     UP_PRESSED:
+0129 31E9            229                     ACALL   DEBOUNCE
+012B 20B31F          230                     JB      UP_KEY,KEY_DONE
+                     231     
+012E E537            232                     MOV     A,SET_MODE
+0130 6019            233                     JZ      UP_RELEASE
+                     234     
+0132 B4010C          235                     CJNE    A,#01H,INCREMENT_ALARM_MINUTE
+                     236     
+0135                 237     INCREMENT_ALARM_HOUR:
+0135 0534            238                     INC     AL_HOUR
+0137 E534            239                     MOV     A,AL_HOUR
+0139 B4180F          240                     CJNE    A,#24D,UP_RELEASE
+013C 753400          241                     MOV     AL_HOUR,#00D
+013F 800A            242                     SJMP    UP_RELEASE
+                     243     
+0141                 244     INCREMENT_ALARM_MINUTE:
+0141 0535            245                     INC     AL_MINUTE
+0143 E535            246                     MOV     A,AL_MINUTE
+0145 B43C03          247                     CJNE    A,#60D,UP_RELEASE
+0148 753500          248                     MOV     AL_MINUTE,#00D
+                     249     
+014B                 250     UP_RELEASE:
+014B 31F6            251                     ACALL   WAIT_UP_RELEASE
+                     252     
+014D                 253     KEY_DONE:
+014D 22              254                     RET
+                     255     
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     5
+
+                     256     
+                     257     ; ============================================================
+                     258     ; Display: normal mode shows current time.
+                     259     ; Setting mode shows alarm time.
+                     260     ; ============================================================
+014E                 261     SHOW_DISPLAY:
+014E E537            262                     MOV     A,SET_MODE
+0150 7012            263                     JNZ     SHOW_ALARM_TIME
+                     264     
+                     265     ; Take safe copy of current time
+0152 C2A9            266                     CLR     ET0
+0154 E532            267                     MOV     A,HOUR
+0156 F53B            268                     MOV     DISP_HOUR,A
+0158 E531            269                     MOV     A,MINUTE
+015A F53C            270                     MOV     DISP_MINUTE,A
+015C E530            271                     MOV     A,SEC
+015E F53D            272                     MOV     DISP_SEC,A
+0160 D2A9            273                     SETB    ET0
+0162 800B            274                     SJMP    DISPLAY_DIGITS
+                     275     
+0164                 276     SHOW_ALARM_TIME:
+0164 E534            277                     MOV     A,AL_HOUR
+0166 F53B            278                     MOV     DISP_HOUR,A
+0168 E535            279                     MOV     A,AL_MINUTE
+016A F53C            280                     MOV     DISP_MINUTE,A
+016C 753D00          281                     MOV     DISP_SEC,#00H
+                     282     
+016F                 283     DISPLAY_DIGITS:
+                     284     ; TM1637 auto-increment command
+016F 31C1            285                     ACALL   TM_START
+0171 7440            286                     MOV     A,#40H
+0173 31D3            287                     ACALL   TM_WRITE_BYTE
+0175 31CA            288                     ACALL   TM_STOP
+                     289     
+                     290     ; Start at display address zero
+0177 31C1            291                     ACALL   TM_START
+0179 74C0            292                     MOV     A,#0C0H
+017B 31D3            293                     ACALL   TM_WRITE_BYTE
+                     294     
+                     295     ; Hour tens
+017D E53B            296                     MOV     A,DISP_HOUR
+017F 75F00A          297                     MOV     B,#10D
+0182 84              298                     DIV     AB
+0183 31FE            299                     ACALL   DIGIT_TO_SEG
+0185 31D3            300                     ACALL   TM_WRITE_BYTE
+                     301     
+                     302     ; Hour units and colon
+0187 E5F0            303                     MOV     A,B
+0189 31FE            304                     ACALL   DIGIT_TO_SEG
+018B FE              305                     MOV     R6,A
+                     306     
+                     307     ; Colon blinks in normal display and remains ON while setting alarm.
+018C E537            308                     MOV     A,SET_MODE
+018E 7006            309                     JNZ     COLON_ON
+                     310     
+0190 E53D            311                     MOV     A,DISP_SEC
+0192 5401            312                     ANL     A,#01H
+0194 7004            313                     JNZ     COLON_OFF
+                     314     
+0196                 315     COLON_ON:
+0196 EE              316                     MOV     A,R6
+0197 4480            317                     ORL     A,#80H
+0199 FE              318                     MOV     R6,A
+                     319     
+019A                 320     COLON_OFF:
+019A EE              321                     MOV     A,R6
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     6
+
+019B 31D3            322                     ACALL   TM_WRITE_BYTE
+                     323     
+                     324     ; Minute tens
+019D E53C            325                     MOV     A,DISP_MINUTE
+019F 75F00A          326                     MOV     B,#10D
+01A2 84              327                     DIV     AB
+01A3 31FE            328                     ACALL   DIGIT_TO_SEG
+01A5 31D3            329                     ACALL   TM_WRITE_BYTE
+                     330     
+                     331     ; Minute units
+01A7 E5F0            332                     MOV     A,B
+01A9 31FE            333                     ACALL   DIGIT_TO_SEG
+01AB 31D3            334                     ACALL   TM_WRITE_BYTE
+                     335     
+01AD 31CA            336                     ACALL   TM_STOP
+                     337     
+                     338     ; Display ON, brightness maximum
+01AF 31C1            339                     ACALL   TM_START
+01B1 748F            340                     MOV     A,#8FH
+01B3 31D3            341                     ACALL   TM_WRITE_BYTE
+01B5 31CA            342                     ACALL   TM_STOP
+01B7 22              343                     RET
+                     344     
+                     345     
+                     346     ; ============================================================
+                     347     ; TM1637 communication routines
+                     348     ; ============================================================
+01B8                 349     TM_INIT:
+01B8 31C1            350                     ACALL   TM_START
+01BA 7440            351                     MOV     A,#40H
+01BC 31D3            352                     ACALL   TM_WRITE_BYTE
+01BE 31CA            353                     ACALL   TM_STOP
+01C0 22              354                     RET
+                     355     
+01C1                 356     TM_START:
+01C1 D291            357                     SETB    DIO
+01C3 D290            358                     SETB    CLK
+01C5 C291            359                     CLR     DIO
+01C7 C290            360                     CLR     CLK
+01C9 22              361                     RET
+                     362     
+01CA                 363     TM_STOP:
+01CA C290            364                     CLR     CLK
+01CC C291            365                     CLR     DIO
+01CE D290            366                     SETB    CLK
+01D0 D291            367                     SETB    DIO
+01D2 22              368                     RET
+                     369     
+                     370     ; Send byte in A, least-significant bit first
+01D3                 371     TM_WRITE_BYTE:
+01D3 7F08            372                     MOV     R7,#08D
+                     373     
+01D5                 374     WRITE_BIT:
+01D5 C290            375                     CLR     CLK
+01D7 13              376                     RRC     A
+01D8 9291            377                     MOV     DIO,C
+01DA D290            378                     SETB    CLK
+01DC 00              379                     NOP
+01DD C290            380                     CLR     CLK
+01DF DFF4            381                     DJNZ    R7,WRITE_BIT
+                     382     
+                     383     ; Ignore acknowledge but release DIO correctly
+01E1 D291            384                     SETB    DIO
+01E3 D290            385                     SETB    CLK
+01E5 00              386                     NOP
+01E6 C290            387                     CLR     CLK
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     7
+
+01E8 22              388                     RET
+                     389     
+                     390     
+                     391     ; ============================================================
+                     392     ; Button debounce and release routines
+                     393     ; ============================================================
+01E9                 394     DEBOUNCE:
+01E9 7D1E            395                     MOV     R5,#30D
+01EB                 396     DEB1:
+01EB 7CC8            397                     MOV     R4,#200D
+01ED                 398     DEB2:
+01ED DCFE            399                     DJNZ    R4,DEB2
+01EF DDFA            400                     DJNZ    R5,DEB1
+01F1 22              401                     RET
+                     402     
+01F2                 403     WAIT_SET_RELEASE:
+01F2 30B2FD          404                     JNB     SET_KEY,WAIT_SET_RELEASE
+01F5 22              405                     RET
+                     406     
+01F6                 407     WAIT_UP_RELEASE:
+01F6 30B3FD          408                     JNB     UP_KEY,WAIT_UP_RELEASE
+01F9 22              409                     RET
+                     410     
+01FA                 411     WAIT_ALARM_RELEASE:
+01FA 30B4FD          412                     JNB     ALARM_KEY,WAIT_ALARM_RELEASE
+01FD 22              413                     RET
+                     414     
+                     415     
+                     416     ; ============================================================
+                     417     ; Seven-segment patterns
+                     418     ; ============================================================
+01FE                 419     DIGIT_TO_SEG:
+01FE 900203          420                     MOV     DPTR,#SEGMENT_TABLE
+0201 93              421                     MOVC    A,@A+DPTR
+0202 22              422                     RET
+                     423     
+0203                 424     SEGMENT_TABLE:
+0203 3F              425                     DB      3FH             ; 0
+0204 06              426                     DB      06H             ; 1
+0205 5B              427                     DB      5BH             ; 2
+0206 4F              428                     DB      4FH             ; 3
+0207 66              429                     DB      66H             ; 4
+0208 6D              430                     DB      6DH             ; 5
+0209 7D              431                     DB      7DH             ; 6
+020A 07              432                     DB      07H             ; 7
+020B 7F              433                     DB      7FH             ; 8
+020C 6F              434                     DB      6FH             ; 9
+                     435     
+                     436                     END
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     8
+
+SYMBOL TABLE LISTING
+------ ----- -------
+
+
+N A M E                 T Y P E  V A L U E   ATTRIBUTES
+
+ACC. . . . . . . . . .  D ADDR   00E0H   A   
+ALARM_DONE . . . . . .  C ADDR   00F2H   A   
+ALARM_EN . . . . . . .  N NUMB   0036H   A   
+ALARM_ENABLED. . . . .  C ADDR   00D5H   A   
+ALARM_KEY. . . . . . .  B ADDR   00B0H.4 A   
+ALARM_LATCH. . . . . .  N NUMB   0039H   A   
+ALARM_PRESSED. . . . .  C ADDR   00FDH   A   
+ALARM_SOUND. . . . . .  C ADDR   008FH   A   
+AL_HOUR. . . . . . . .  N NUMB   0034H   A   
+AL_MINUTE. . . . . . .  N NUMB   0035H   A   
+B. . . . . . . . . . .  D ADDR   00F0H   A   
+BEEP_TICK. . . . . . .  N NUMB   003AH   A   
+BUZZER . . . . . . . .  B ADDR   00B0H.5 A   
+CHECK_ALARM. . . . . .  C ADDR   00C8H   A   
+CHECK_KEYS . . . . . .  C ADDR   00F3H   A   
+CLK. . . . . . . . . .  B ADDR   0090H.0 A   
+CLOCK_TICK . . . . . .  C ADDR   009BH   A   
+COLON_OFF. . . . . . .  C ADDR   019AH   A   
+COLON_ON . . . . . . .  C ADDR   0196H   A   
+DEB1 . . . . . . . . .  C ADDR   01EBH   A   
+DEB2 . . . . . . . . .  C ADDR   01EDH   A   
+DEBOUNCE . . . . . . .  C ADDR   01E9H   A   
+DIGIT_TO_SEG . . . . .  C ADDR   01FEH   A   
+DIO. . . . . . . . . .  B ADDR   0090H.1 A   
+DISPLAY_DIGITS . . . .  C ADDR   016FH   A   
+DISP_HOUR. . . . . . .  N NUMB   003BH   A   
+DISP_MINUTE. . . . . .  N NUMB   003CH   A   
+DISP_SEC . . . . . . .  N NUMB   003DH   A   
+ET0. . . . . . . . . .  B ADDR   00A8H.1 A   
+HOUR . . . . . . . . .  N NUMB   0032H   A   
+IE . . . . . . . . . .  D ADDR   00A8H   A   
+INCREMENT_ALARM_HOUR .  C ADDR   0135H   A   
+INCREMENT_ALARM_MINUTE  C ADDR   0141H   A   
+KEY_DONE . . . . . . .  C ADDR   014DH   A   
+MAIN . . . . . . . . .  C ADDR   0030H   A   
+MAIN_LOOP. . . . . . .  C ADDR   0072H   A   
+MINUTE . . . . . . . .  N NUMB   0031H   A   
+NOT_ALARM_TIME . . . .  C ADDR   00EFH   A   
+P1 . . . . . . . . . .  D ADDR   0090H   A   
+P3 . . . . . . . . . .  D ADDR   00B0H   A   
+PSW. . . . . . . . . .  D ADDR   00D0H   A   
+RINGING. . . . . . . .  N NUMB   0038H   A   
+SEC. . . . . . . . . .  N NUMB   0030H   A   
+SEGMENT_TABLE. . . . .  C ADDR   0203H   A   
+SET_KEY. . . . . . . .  B ADDR   00B0H.2 A   
+SET_MODE . . . . . . .  N NUMB   0037H   A   
+SET_PRESSED. . . . . .  C ADDR   0117H   A   
+SET_RELEASE. . . . . .  C ADDR   0126H   A   
+SHOW_ALARM_TIME. . . .  C ADDR   0164H   A   
+SHOW_DISPLAY . . . . .  C ADDR   014EH   A   
+SP . . . . . . . . . .  D ADDR   0081H   A   
+TF0. . . . . . . . . .  B ADDR   0088H.5 A   
+TH0. . . . . . . . . .  D ADDR   008CH   A   
+TICK50 . . . . . . . .  N NUMB   0033H   A   
+TIMER0_ISR . . . . . .  C ADDR   007AH   A   
+TIMER_EXIT . . . . . .  C ADDR   00C3H   A   
+TL0. . . . . . . . . .  D ADDR   008AH   A   
+TMOD . . . . . . . . .  D ADDR   0089H   A   
+TM_INIT. . . . . . . .  C ADDR   01B8H   A   
+TM_START . . . . . . .  C ADDR   01C1H   A   
+A51 MACRO ASSEMBLER  DIGITAL_CLOCK                                                        09/26/2026 01:15:04 PAGE     9
+
+TM_STOP. . . . . . . .  C ADDR   01CAH   A   
+TM_WRITE_BYTE. . . . .  C ADDR   01D3H   A   
+TOGGLE_ALARM . . . . .  C ADDR   010EH   A   
+TR0. . . . . . . . . .  B ADDR   0088H.4 A   
+UP_KEY . . . . . . . .  B ADDR   00B0H.3 A   
+UP_PRESSED . . . . . .  C ADDR   0129H   A   
+UP_RELEASE . . . . . .  C ADDR   014BH   A   
+WAIT_ALARM_RELEASE . .  C ADDR   01FAH   A   
+WAIT_SET_RELEASE . . .  C ADDR   01F2H   A   
+WAIT_UP_RELEASE. . . .  C ADDR   01F6H   A   
+WRITE_BIT. . . . . . .  C ADDR   01D5H   A   
+
+
+REGISTER BANK(S) USED: 0 
+
+
+ASSEMBLY COMPLETE.  0 WARNING(S), 0 ERROR(S)
